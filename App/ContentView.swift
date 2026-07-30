@@ -1,202 +1,268 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var bp: BPClient
-    @EnvironmentObject var health: Health
+    @EnvironmentObject private var bp: BPClient
+    @EnvironmentObject private var health: Health
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("autoSaveToHealth") private var autoSaveToHealth = true
-    @AppStorage("measurementMode") private var measurementModeString = "single"
-    @AppStorage("delayBetweenRuns") private var delayBetweenRuns: Double = 30.0
-
-    private var delaySecondsText: String {
-        "\(Int(delayBetweenRuns))s"
-    }
+    @AppStorage("readingCount") private var readingCount = 1
+    @AppStorage("delayBetweenRuns") private var delayBetweenRuns = 30.0
+    @State private var nextMeasurementIsGuest = {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--screenshot-state=guest")
+#else
+        false
+#endif
+    }()
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 16) {
-                // Top bar - LibreArm on left, Blood Pressure on right
-                HStack {
-                    Text("LibreArm")
-                        .font(.title2)
-                        .bold()
-                    Spacer()
-                    Text("Blood Pressure")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 8)
-
-                // Status line (Connection and Battery)
-                HStack {
-                    Text(bp.status)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(bp.batteryStatusLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 4)
-
-                // Reading card with embedded graph - always visible
-                VStack(spacing: 8) {
-                    if let r = bp.lastReading {
-                        // BP reading and stats on same line
-                        HStack(spacing: 12) {
-                            Text("\(Int(r.sys))/\(Int(r.dia)) mmHg")
-                                .font(.system(size: 24, weight: .semibold))
-                            if let map = r.map {
-                                Label("\(Int(map)) MAP", systemImage: "gauge")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let hr = r.hr {
-                                Label("\(Int(hr)) bpm", systemImage: "heart.fill")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        // Embedded graph with actual reading
-                        HypertensionGraphView(systolic: r.sys, diastolic: r.dia)
-                            .frame(height: 280)
-                            .padding(.top, 4)
-                    } else {
-                        // Placeholder when no reading exists yet
-                        Text("No reading yet")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(.secondary)
-
-                        // Empty graph with default values
-                        HypertensionGraphView(systolic: 120, diastolic: 80)
-                            .frame(height: 280)
-                            .padding(.top, 4)
-                            .opacity(0.3)
-                    }
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                // Start/Stop button
-                Button {
-                    if bp.isMeasuring {
-                        bp.cancelMeasurement()
-                    } else {
-                        bp.startMeasurement()
-                    }
-                } label: {
-                    Text(bp.isMeasuring ? "Stop Measurement" : "Start Measurement")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(bp.isMeasuring ? .red : .blue)
-                .disabled((!bp.canMeasure && !bp.isMeasuring) || (bp.batteryLevelPct != nil && bp.batteryLevelPct! <= 10 && !bp.isMeasuring))
-
-                // Save to Health toggle (disabled while measuring)
-                Toggle("Save to Apple Health", isOn: $autoSaveToHealth)
-                    .disabled(bp.isMeasuring)
-
-                // Average Mode toggle (disabled while measuring)
-                HStack {
-                    Text("Average (3 readings)")
-                    Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { bp.measurementMode == .average3 },
-                        set: { newValue in
-                            bp.measurementMode = newValue ? .average3 : .single
-                            measurementModeString = newValue ? "average3" : "single"
-                        }
-                    ))
-                    .labelsHidden()
-                    .disabled(bp.isMeasuring)
-                }
-
-                // Delay Slider (always visible, disabled when not in Average mode)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Delay between readings (seconds)")
-                        Spacer()
-                        Text(delaySecondsText)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(
-                        value: $delayBetweenRuns,
-                        in: 15...60,
-                        step: 15,
-                        onEditingChanged: { editing in
-                            if !editing {
-                                // Snap to nearest of [15, 30, 45, 60]
-                                let options: [Double] = [15, 30, 45, 60]
-                                let v = delayBetweenRuns
-                                let snapped = options.min(by: { abs($0 - v) < abs($1 - v) }) ?? 30
-                                delayBetweenRuns = snapped
-                                bp.delayBetweenRuns = snapped
-                            }
-                        }
-                    )
-                    .disabled(bp.isMeasuring || bp.measurementMode != .average3)
-                }
-                .padding(.horizontal)
-
-                Spacer(minLength: 8)
-
-                // Retry button
-                if !bp.isConnected {
-                    Button("Retry Connect") { bp.startConnect(timeout: 30) }
-                        .buttonStyle(.bordered)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                // Footer - Credits
-                VStack(spacing: 4) {
-                    Text("Developed by Paul Taylor")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    Link("GitHub: ptylr/LibreArm",
-                         destination: URL(string: "https://github.com/ptylr/LibreArm")!)
-                        .font(.footnote)
-                    if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-                        Text("Version \(version)")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.bottom, 8)
+        NavigationStack {
+            ViewThatFits(in: .vertical) {
+                content
+                ScrollView { content }
             }
-            .padding(.horizontal, 20)
-            .navigationBarHidden(true)
-            .task {
-                // Restore settings from UserDefaults
-                bp.measurementMode = (measurementModeString == "average3") ? .average3 : .single
-                bp.delayBetweenRuns = delayBetweenRuns
-
-                do {
-                    try await health.requestAuth()
-                } catch {
-                    bp.status = "Health permission denied"
-                }
-
-                bp.onFinalReading = { reading in
-                    // v1.4.0: Final validation guard before saving to Health
-                    guard autoSaveToHealth, bp.isValidReading(reading) else { return }
-                    Task {
-                        try? await health.saveBP(
-                            systolic: reading.sys,
-                            diastolic: reading.dia,
-                            bpm: reading.hr,
-                            date: Date()
-                        )
-                    }
-                }
-
-                bp.startConnect(timeout: 30)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                footer
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .task { await configure() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { bp.refreshBattery() }
+            }
+            .onChange(of: readingCount) { _, value in
+                bp.readingCount = min(max(value, 1), 3)
+            }
+            .onChange(of: delayBetweenRuns) { _, value in
+                bp.delayBetweenRuns = min(max(value, 15), 60)
+            }
+            .onChange(of: nextMeasurementIsGuest) { _, _ in
+                health.resetSaveState()
             }
         }
+    }
+
+    private var content: some View {
+        VStack(spacing: 12) {
+            header
+            status
+            readingCard
+            measurementControls
+            settings
+            healthAuthorizationStatus
+            healthStatus
+            recovery
+        }
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("LibreArm: Blood Pressure")
+                .font(.title2.bold())
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer()
+            Text(bp.batteryStatusLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(bp.batteryStatusLine)
+        }
+    }
+
+    private var status: some View {
+        Text(bp.status)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .lineLimit(2)
+    }
+
+    private var readingCard: some View {
+        let reading = bp.lastReading ?? bp.liveReading
+        return VStack(spacing: 7) {
+            Text(reading.map { "\(Int($0.sys.rounded()))/\(Int($0.dia.rounded())) mmHg" } ?? "—/— mmHg")
+                .font(.title2.bold())
+
+            HStack(spacing: 8) {
+                Text(reading?.map.map { "\(Int($0.rounded())) MAP" } ?? "— MAP")
+                Text("|")
+                Text(reading?.hr.map { "\(Int($0.rounded())) bpm" } ?? "— bpm")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            if let reading = bp.lastReading, reading.irregularPulseDetected {
+                Label("Device-reported irregular pulse; this is not a diagnosis.", systemImage: "waveform.path.ecg")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let reading = bp.lastReading, !reading.isWithinSupportedSaveRange {
+                Label("Outside LibreArm’s supported save range; visible but not saved.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HypertensionGraphView(
+                systolic: reading?.sys,
+                diastolic: reading?.dia,
+                showsClassification: bp.lastReading != nil
+            )
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var measurementControls: some View {
+        VStack(spacing: 6) {
+            Button {
+                if bp.isMeasuring {
+                    bp.cancelMeasurement()
+                } else {
+                    health.resetSaveState()
+                    bp.startMeasurement(guest: nextMeasurementIsGuest)
+                }
+            } label: {
+                Label(
+                    bp.isMeasuring ? "Stop Measurement" : nextMeasurementIsGuest ? "Start Guest Measurement" : "Start Measurement",
+                    systemImage: bp.isMeasuring ? "stop.fill" : "play.fill"
+                )
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(bp.isMeasuring ? .red : .blue)
+            .disabled((!bp.canMeasure && !bp.isMeasuring) || (bp.batteryLevelPct ?? 100) <= 10 && !bp.isMeasuring)
+            .padding(.vertical, 5)
+
+            Toggle(isOn: $nextMeasurementIsGuest) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Guest measurement")
+                    Text("One run only; it will not be saved to Apple Health.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.subheadline)
+            .disabled(bp.isMeasuring)
+        }
+    }
+
+    private var settings: some View {
+        GroupBox("Measurement settings") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Save owner readings to Apple Health", isOn: $autoSaveToHealth)
+
+                Picker("Readings to average", selection: $readingCount) {
+                    ForEach(1...3, id: \.self) { count in
+                        Text("\(count)").tag(count)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if readingCount > 1 {
+                    HStack {
+                        Text("Delay")
+                        Slider(value: $delayBetweenRuns, in: 15...60, step: 15)
+                            .accessibilityLabel("Delay between readings")
+                            .accessibilityValue("\(Int(delayBetweenRuns)) seconds")
+                        Text("\(Int(delayBetweenRuns))s")
+                            .monospacedDigit()
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .font(.subheadline)
+        .disabled(bp.isMeasuring || nextMeasurementIsGuest)
+        .opacity(bp.isMeasuring || nextMeasurementIsGuest ? 0.55 : 1)
+        .padding(.top, 6)
+    }
+
+    @ViewBuilder
+    private var healthAuthorizationStatus: some View {
+        switch health.authorizationState {
+        case .notRequested, .ready:
+            EmptyView()
+        case .requesting:
+            Label("Requesting Apple Health access…", systemImage: "heart.text.square")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case let .failed(message):
+            Label(message, systemImage: "exclamationmark.circle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var healthStatus: some View {
+        switch health.saveState {
+        case .idle: EmptyView()
+        case .saving: Label("Saving to Apple Health…", systemImage: "arrow.triangle.2.circlepath").font(.caption)
+        case .saved: Label("Saved to Apple Health", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+        case let .partiallySaved(message), let .failed(message), let .skipped(message):
+            Label(message, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var recovery: some View {
+        if !bp.isConnected {
+            Button("Retry Connection") { bp.startConnect(timeout: 30) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+    }
+
+    private var footer: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Text("Paul Taylor")
+            Text("•")
+            Link("GitHub: ptylr/LibreArm", destination: URL(string: "https://github.com/ptylr/LibreArm")!)
+                .foregroundStyle(.blue)
+            if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+                Text("• v\(version)")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity, minHeight: 42, alignment: .center)
+        .background(Color(uiColor: .secondarySystemBackground))
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private func configure() async {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--screenshot-state=") }) {
+            readingCount = 3
+            delayBetweenRuns = 30
+        }
+#endif
+        readingCount = min(max(readingCount, 1), 3)
+        delayBetweenRuns = min(max(delayBetweenRuns, 15), 60)
+        bp.readingCount = readingCount
+        bp.delayBetweenRuns = delayBetweenRuns
+        await health.requestAuth()
+        bp.onFinalReading = { reading, wasGuest in
+            Task { @MainActor in
+                _ = await health.record(reading, guest: wasGuest, enabled: autoSaveToHealth)
+                if wasGuest {
+                    nextMeasurementIsGuest = false
+                }
+            }
+        }
+        bp.startConnect(timeout: 30)
     }
 }

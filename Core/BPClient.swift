@@ -1,564 +1,440 @@
-import CoreBluetooth
+@preconcurrency import CoreBluetooth
 import Foundation
 import UIKit
-import UserNotifications
 
-enum MeasurementMode {
-    case single
-    case average3
+enum ConnectionState: Equatable {
+    case unavailable, searching, connecting, preparing, ready, disconnected, failed(String)
 }
 
-struct BPReading { let sys: Double; let dia: Double; let map: Double?; let hr: Double? }
+enum MeasurementState: Equatable {
+    case idle, checkingBattery, measuring(Int, Int), waiting(Int, Int, Int), failed(String)
+}
 
-final class BPClient: NSObject, ObservableObject {
-    // UI state
-    @Published var status = "Searching for device…"
-    @Published var lastReading: BPReading?
-    @Published var isConnected = false
-    @Published var canMeasure = false
-    @Published var isMeasuring = false
-    @Published var delayBetweenRuns: Double = 15
+enum ControlCommand: Equatable {
+    case start, cancel
+    var data: Data { Data([0xF1, self == .start ? 0x01 : 0x02]) }
+}
 
-    // Battery state (v1.4.0)
-    @Published var batteryLevelPct: Int? = nil
-    @Published var batteryStatusLine: String = "Battery: unavailable"
+struct ControlWriteTracker {
+    private var commands: [ControlCommand] = []
 
-    // Battery notification tracking
-    private enum BatteryState {
-        case unknown, normal, low, critical
+    mutating func enqueue(_ command: ControlCommand) {
+        commands.append(command)
     }
-    private var lastBatteryState: BatteryState = .unknown
 
-    // Measurement mode
-    @Published var measurementMode: MeasurementMode = .single
+    mutating func next() -> ControlCommand? {
+        guard !commands.isEmpty else { return nil }
+        return commands.removeFirst()
+    }
 
-    // Averaging session state (used only when measurementMode == .average3)
-    private var remainingRuns: Int = 0
-    private var accumulatedReadings: [BPReading] = []
-    private let interRunDelaySeconds: TimeInterval = 15
+    mutating func removeAll() {
+        commands.removeAll()
+    }
+}
 
+@MainActor
+final class BPClient: NSObject, ObservableObject {
+    @Published private(set) var connectionState: ConnectionState = .searching
+    @Published private(set) var measurementState: MeasurementState = .idle
+    @Published private(set) var lastReading: BPReading?
+    @Published private(set) var liveReading: BPReading?
+    @Published private(set) var batteryLevelPct: Int?
+    @Published private(set) var batteryStatusLine = "Battery: unavailable"
+    @Published var readingCount = 1
+    @Published var delayBetweenRuns: Double = 30
+    var onFinalReading: ((BPReading, Bool) -> Void)?
 
-    /// Fires once per measurement session when the cuff stops sending updates.
-    var onFinalReading: ((BPReading) -> Void)?
+    var isConnected: Bool { connectionState == .preparing || connectionState == .ready }
+    var canMeasure: Bool { connectionState == .ready && measurementState == .idle }
+    var isMeasuring: Bool {
+        switch measurementState { case .idle, .failed: false; default: true }
+    }
+    var status: String {
+        switch measurementState {
+        case .checkingBattery: return "Checking battery…"
+        case let .measuring(n, total): return total == 1 ? "Measuring…" : "Measuring (reading \(n) of \(total))…"
+        case let .waiting(done, total, seconds): return "Reading \(done) of \(total) complete — next in \(seconds)s…"
+        case let .failed(message): return message
+        case .idle: break
+        }
+        switch connectionState {
+        case .unavailable: return "Bluetooth unavailable"
+        case .searching: return "Searching for device…"
+        case .connecting: return "Connecting…"
+        case .preparing: return "Connected — preparing…"
+        case .ready: return "Connected — ready"
+        case .disconnected: return "Disconnected"
+        case let .failed(message): return message
+        }
+    }
 
-    // BLE
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var measurementChar: CBCharacteristic?
     private var controlChar: CBCharacteristic?
     private var batteryChar: CBCharacteristic?
+    private var notificationReady = false
 
-    // Debounce/Session
-    private var completionWorkItem: DispatchWorkItem?
-    private let completionDebounceSeconds: TimeInterval = 1.5
-    private var sessionActive = false
-    private var hasFiredFinal = false
-
-    // Connect timeout
-    private var connectTimeoutWorkItem: DispatchWorkItem?
-    private var connectTimeoutSeconds: TimeInterval = 30
-
-    // Standard Blood Pressure Service + Measurement char
-    private let bpsService  = CBUUID(string: "1810")
+    private let bpsService = CBUUID(string: "1810")
     private let measurement = CBUUID(string: "2A35")
-
-    // QardioArm control ("feature") characteristic lives inside 0x1810
     private let control = CBUUID(string: "583CB5B3-875D-40ED-9098-C39EB0C1983D")
-
-    // Battery Service (v1.4.0)
     private let batteryService = CBUUID(string: "180F")
-    private let batteryLevel = CBUUID(string: "2A19")
+    private let battery = CBUUID(string: "2A19")
 
-    // Commands (little-endian on the wire)
-    private let startCommand  = Data([0xF1, 0x01])
-    private let cancelCommand = Data([0xF1, 0x02])
+    private var connectionID = UUID()
+    private var sessionID = UUID()
+    private var readings: [BPReading] = []
+    private var controlWrites = ControlWriteTracker()
+    private var guestSession = false
+    private var sessionReadingCount = 1
+    private var waitingForBattery = false
+    private var connectTask: DispatchWorkItem?
+    private var finalizeTask: DispatchWorkItem?
+    private var watchdogTask: DispatchWorkItem?
+    private var countdownTask: DispatchWorkItem?
+    private var batteryFallbackTask: DispatchWorkItem?
 
-    // MARK: - Lifecycle
+    private var screenshotState: String? {
+#if DEBUG
+        ProcessInfo.processInfo.arguments
+            .first(where: { $0.hasPrefix("--screenshot-state=") })?
+            .replacingOccurrences(of: "--screenshot-state=", with: "")
+#else
+        nil
+#endif
+    }
+
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
-        requestNotificationPermission()
-    }
-
-    // MARK: - Notifications (v1.4.0)
-
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
-    private func sendBatteryNotification(level: Int, isCritical: Bool) {
-        guard UIApplication.shared.applicationState != .active else { return }
-
-        let content = UNMutableNotificationContent()
-        if isCritical {
-            content.title = "QardioArm Battery Critical"
-            content.body = "Battery critical (\(level)%). Replace batteries."
-        } else {
-            content.title = "QardioArm Battery Low"
-            content.body = "QardioArm battery low (\(level)%)."
-        }
-        content.sound = .default
-
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
-    }
-
-    // MARK: - Battery Management (v1.4.0)
-
-    private func updateBatteryStatus(_ level: Int?) {
-        guard let level = level else {
-            batteryLevelPct = nil
-            batteryStatusLine = "Battery: unavailable"
+        if let screenshotState {
+            connectionState = .ready
+            batteryLevelPct = 84
+            batteryStatusLine = "Battery: 84%"
+            readingCount = 3
+            switch screenshotState {
+            case "measuring":
+                measurementState = .measuring(2, 3)
+                liveReading = BPReading(sys: 120, dia: 70)
+            case "result", "guidance":
+                lastReading = BPReading(sys: 120, dia: 70, map: 87, hr: 60)
+            default:
+                break
+            }
             return
         }
-
-        batteryLevelPct = level
-
-        if level <= 10 {
-            batteryStatusLine = "Battery: \(level)% (Critical)"
-        } else if level <= 20 {
-            batteryStatusLine = "Battery: \(level)% (Low)"
-        } else {
-            batteryStatusLine = "Battery: \(level)%"
-        }
-
-        // Check for threshold crossings and send notifications
-        let newState: BatteryState
-        if level <= 10 {
-            newState = .critical
-        } else if level <= 20 {
-            newState = .low
-        } else {
-            newState = .normal
-        }
-
-        // Only notify on transitions to worse states
-        if lastBatteryState != newState {
-            if newState == .critical && lastBatteryState != .critical {
-                sendBatteryNotification(level: level, isCritical: true)
-            } else if newState == .low && (lastBatteryState == .normal || lastBatteryState == .unknown) {
-                sendBatteryNotification(level: level, isCritical: false)
-            }
-            lastBatteryState = newState
-        }
+        central = CBCentralManager(delegate: self, queue: .main)
     }
 
-    private func readBatteryLevel() {
-        guard let batteryChar = batteryChar, let peripheral = peripheral else { return }
+    func startConnect(timeout: TimeInterval = 30) {
+        if screenshotState != nil { return }
+        guard central.state == .poweredOn else { connectionState = .unavailable; return }
+        let previousPeripheral = peripheral
+        endSession(sendCancel: false, result: .idle, keepReading: true)
+        if let previousPeripheral {
+            central.cancelPeripheralConnection(previousPeripheral)
+        }
+        clearDevice()
+        connectionID = UUID()
+        let id = connectionID
+        connectionState = .searching
+        central.scanForPeripherals(withServices: [bpsService])
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.connectionID == id, self.connectionState != .ready else { return }
+            self.central.stopScan()
+            if let p = self.peripheral { self.central.cancelPeripheralConnection(p) }
+            self.clearDevice()
+            self.connectionState = .failed("Connection timed out. Check the cuff is awake and nearby.")
+        }
+        connectTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: task)
+    }
+
+    func refreshBattery() {
+        if screenshotState != nil { return }
+        guard UIApplication.shared.applicationState == .active, let peripheral, let batteryChar else { return }
         peripheral.readValue(for: batteryChar)
     }
 
-    // MARK: - Public API
-
-    /// Begin scanning/connecting to the cuff. Call on app start or when user taps Retry.
-    func startConnect(timeout: TimeInterval = 30) {
-        connectTimeoutSeconds = timeout
-        guard central.state == .poweredOn else {
-            status = "Bluetooth unavailable"
-            return
-        }
-
-        // reset UI/flags
-        isConnected = false
-        canMeasure = false
-        isMeasuring = false
+    func startMeasurement(guest: Bool = false) {
+        guard canMeasure else { return }
+        readingCount = min(max(readingCount, 1), 3)
+        sessionReadingCount = Self.sessionReadingCount(configuredCount: readingCount, guest: guest)
+        readings.removeAll()
         lastReading = nil
-        sessionActive = false
-        hasFiredFinal = false
-        completionWorkItem?.cancel()
-        connectTimeoutWorkItem?.cancel()
-
-        status = "Searching for device…"
-        central.stopScan()
-        central.scanForPeripherals(withServices: [bpsService], options: nil)
-
-        // 30s timeout → mark not connected
-        let work = DispatchWorkItem { [weak self] in
-            guard let self = self, !self.isConnected else { return }
-            self.central.stopScan()
-            self.status = "Not connected (timeout). Check power & Bluetooth."
-        }
-        connectTimeoutWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
-    }
-
-    /// Start measurement (enabled when `canMeasure` is true).
-    func startMeasurement() {
-        guard let _ = peripheral, let _ = controlChar, canMeasure else { return }
-
-        // v1.4.0: Block measurement if battery is critical
-        if let batteryPct = batteryLevelPct, batteryPct <= 10 {
-            status = "Battery critical (\(batteryPct)%). Replace batteries to measure."
-            return
-        }
-
-        // v1.4.0: Read battery before starting measurement
-        readBatteryLevel()
-
-        if measurementMode == .average3 && sessionActive {
-            return
-        }
-        status = (measurementMode == .average3) ? "Measuring (run 1 of 3)…" : "Measuring…"
-        sessionActive = true
-        hasFiredFinal = false
-        isMeasuring = true
+        guestSession = guest
+        sessionID = UUID()
+        waitingForBattery = true
+        measurementState = .checkingBattery
         UIApplication.shared.isIdleTimerDisabled = true
-        completionWorkItem?.cancel()
+        refreshBattery()
 
-        if measurementMode == .single {
-            // One-and-done
-            accumulatedReadings.removeAll()
-            remainingRuns = 0
-            performSingleRunStart()
-        } else {
-            // Average over 3 runs spaced by 10s
-            accumulatedReadings.removeAll()
-            remainingRuns = 3
-            performSingleRunStart()
+        let id = sessionID
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.sessionID == id, self.waitingForBattery else { return }
+            self.waitingForBattery = false
+            if self.batteryChar == nil { self.batteryStatusLine = "Battery: unavailable (measurement can continue)" }
+            self.beginRun(1)
         }
+        batteryFallbackTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: task)
     }
 
-    /// Internal: send the start command to the cuff (assumes BLE characteristics are ready)
-    private func performSingleRunStart() {
-        guard let p = peripheral, let c = controlChar else { return }
-        p.writeValue(startCommand, for: c, type: .withResponse)
-    }
+    func cancelMeasurement() { endSession(sendCancel: true, result: .idle, keepReading: true) }
+    func isValidReading(_ reading: BPReading) -> Bool { reading.isStructurallyValid }
 
-    /// Stop the current measurement without saving a reading.
-    func cancelMeasurement() {
-        guard let p = peripheral, let c = controlChar else { return }
-        p.writeValue(cancelCommand, for: c, type: .withResponse)
-        // Cancel any averaging session
-        remainingRuns = 0
-        accumulatedReadings.removeAll()
-        // Do not call finalize (which would save); just reset state.
-        sessionActive = false
-        hasFiredFinal = true
-        isMeasuring = false
-        UIApplication.shared.isIdleTimerDisabled = false
-        status = "Connected — ready"
-    }
-
-    // MARK: - Helpers
-
-    // MARK: - Strict Validation (v1.4.0)
-
-    /// Validates a blood pressure reading using strict criteria
-    func isValidReading(_ r: BPReading) -> Bool {
-        // Check for invalid/incomplete values
-        guard r.dia > 0 else { return false }
-        guard r.sys.isFinite && r.dia.isFinite else { return false }
-
-        // Physiologically plausible ranges
-        guard r.sys >= 60 && r.sys <= 260 else { return false }
-        guard r.dia >= 40 && r.dia <= 160 else { return false }
-
-        // Systolic must be greater than diastolic
-        guard r.sys > r.dia else { return false }
-
-        // Pulse pressure (sys - dia) should be reasonable
-        guard (r.sys - r.dia) <= 120 else { return false }
-
-        return true
-    }
-
-    private func scheduleFinalize() {
-        completionWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.finalizeIfNeeded()
-        }
-        completionWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + completionDebounceSeconds, execute: work)
-    }
-
-    private func finalizeIfNeeded() {
-        // Must be in-session, not already finalized, and have a latest reading
-        guard sessionActive, let reading = lastReading else { return }
-
-        // Only finalize when the measurement sequence has finished.
-        // We use the presence of diastolic (>0) as the completion guard.
-        guard reading.dia > 0 else { return }
-
-        // v1.4.0: Strict validation - reject invalid readings
-        guard isValidReading(reading) else {
-            lastReading = nil
-            sessionActive = false
-            isMeasuring = false
-            UIApplication.shared.isIdleTimerDisabled = false
-            status = "Measurement invalid or incomplete — please try again. Check cuff fit and battery."
-            // Read battery after failed measurement
-            readBatteryLevel()
+    private func beginRun(_ number: Int) {
+        guard let peripheral, let controlChar, connectionState == .ready else {
+            endSession(sendCancel: false, result: .failed("Cuff is no longer ready. Reconnect and try again."), keepReading: true)
             return
         }
+        if let level = batteryLevelPct, level <= 10 {
+            endSession(sendCancel: false, result: .failed("Battery critical (\(level)%). Replace batteries before measuring."), keepReading: true)
+            return
+        }
+        measurementState = .measuring(number, sessionReadingCount)
+        write(.start, characteristic: controlChar, peripheral: peripheral)
+        armWatchdog()
+    }
 
-        // For average3 mode, accumulate and schedule subsequent runs
-        if measurementMode == .average3 {
-            // v1.4.0: Only add valid readings (already validated above)
-            accumulatedReadings.append(reading)
+    private func write(_ command: ControlCommand, characteristic: CBCharacteristic, peripheral: CBPeripheral) {
+        let type: CBCharacteristicWriteType = characteristic.properties.contains(.write) ? .withResponse : .withoutResponse
+        if type == .withResponse { controlWrites.enqueue(command) }
+        peripheral.writeValue(command.data, for: characteristic, type: type)
+    }
 
-            // If we still have more runs to do, schedule the next one
-            if remainingRuns > 1 {
-                remainingRuns -= 1
+    private func armWatchdog() {
+        watchdogTask?.cancel()
+        let id = sessionID
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.sessionID == id, self.isMeasuring else { return }
+            self.endSession(sendCancel: true, result: .failed("No completed reading was received. Check cuff fit, battery and pairing, then try again."), keepReading: true)
+        }
+        watchdogTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: task)
+    }
 
-                // Use the user-selected delay (from slider)
-                var countdown = Int(self.delayBetweenRuns)
-                status = "Measured run \(3 - remainingRuns) of 3 — next in \(countdown)s…"
-                isMeasuring = true
+    private func receive(_ reading: BPReading) {
+        guard Self.acceptsMeasurement(in: measurementState) else { return }
+        liveReading = reading
+        finalizeTask?.cancel()
+        let id = sessionID
+        let task = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.sessionID == id,
+                  Self.acceptsMeasurement(in: self.measurementState) else { return }
+            self.finalize(reading)
+        }
+        finalizeTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: task)
+    }
 
-                // Countdown timer updates every second
-                Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-                    guard let self = self else { timer.invalidate(); return }
-                    countdown -= 1
-                    if countdown > 0 {
-                        self.status = "Measured run \(3 - self.remainingRuns) of 3 — next in \(countdown)s…"
-                    } else {
-                        timer.invalidate()
-                        self.status = "Measuring (run \(4 - self.remainingRuns) of 3)…"
-                        self.isMeasuring = true
-                        self.performSingleRunStart()
-                    }
+    private func finalize(_ reading: BPReading) {
+        guard reading.isComplete else { return }
+        guard reading.isStructurallyValid else {
+            endSession(sendCancel: false, result: .failed("The cuff reported an incomplete or inconsistent result. It was not saved; please try again."), keepReading: true)
+            return
+        }
+        watchdogTask?.cancel()
+        readings.append(reading)
+        if readings.count < sessionReadingCount { scheduleNextRun(); return }
+        guard let result = BPReading.average(readings) else {
+            endSession(sendCancel: false, result: .failed("The reading set could not be averaged. Please try again."), keepReading: true)
+            return
+        }
+        lastReading = result
+        let wasGuest = guestSession
+        endSession(sendCancel: false, result: .idle, keepReading: true)
+        onFinalReading?(result, wasGuest)
+        refreshBattery()
+    }
+
+    private func scheduleNextRun() {
+        let id = sessionID
+        let done = readings.count
+        var seconds = Int(min(max(delayBetweenRuns, 15), 60))
+        measurementState = .waiting(done, sessionReadingCount, seconds)
+        func tick() {
+            let task = DispatchWorkItem { [weak self] in
+                guard let self, self.sessionID == id, self.isMeasuring else { return }
+                seconds -= 1
+                if seconds > 0 {
+                    self.measurementState = .waiting(done, self.sessionReadingCount, seconds)
+                    tick()
+                } else {
+                    self.beginRun(done + 1)
                 }
-
-                return
             }
-
-            // This was the last run → v1.4.0: require ALL 3 readings valid
-            if accumulatedReadings.count < 3 {
-                // Not all readings were valid - abort session
-                lastReading = nil
-                hasFiredFinal = true
-                sessionActive = false
-                isMeasuring = false
-                UIApplication.shared.isIdleTimerDisabled = false
-                status = "Average session invalid — not all readings were valid. Please try again."
-                remainingRuns = 0
-                accumulatedReadings.removeAll()
-                readBatteryLevel()
-                return
-            }
-
-            // Compute average and emit once
-            let avg = average(of: accumulatedReadings)
-
-            // v1.4.0: Validate the averaged result
-            guard isValidReading(avg) else {
-                lastReading = nil
-                hasFiredFinal = true
-                sessionActive = false
-                isMeasuring = false
-                UIApplication.shared.isIdleTimerDisabled = false
-                status = "Average reading invalid — please try again."
-                remainingRuns = 0
-                accumulatedReadings.removeAll()
-                readBatteryLevel()
-                return
-            }
-
-            hasFiredFinal = true
-            sessionActive = false
-            isMeasuring = false
-            UIApplication.shared.isIdleTimerDisabled = false
-            status = "Connected — ready"
-            onFinalReading?(avg)
-            remainingRuns = 0
-            accumulatedReadings.removeAll()
-            readBatteryLevel()
-            return
+            countdownTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: task)
         }
+        tick()
+    }
 
-        // Single mode → emit immediately
-        hasFiredFinal = true
-        sessionActive = false
-        isMeasuring = false
+    private func endSession(sendCancel: Bool, result: MeasurementState, keepReading: Bool) {
+        sessionID = UUID()
+        [finalizeTask, watchdogTask, countdownTask, batteryFallbackTask].forEach { $0?.cancel() }
+        finalizeTask = nil; watchdogTask = nil; countdownTask = nil; batteryFallbackTask = nil
+        waitingForBattery = false
+        if sendCancel, let peripheral, let controlChar {
+            write(.cancel, characteristic: controlChar, peripheral: peripheral)
+        }
+        readings.removeAll()
+        guestSession = false
+        liveReading = nil
+        if !keepReading { lastReading = nil }
+        measurementState = result
         UIApplication.shared.isIdleTimerDisabled = false
-        status = "Connected — ready"
-        onFinalReading?(reading)
-        readBatteryLevel()
     }
 
-    /// Returns the arithmetic mean of valid readings only (v1.4.0: uses strict validation)
-    private func average(of readings: [BPReading]) -> BPReading {
-        // v1.4.0: Use strict validation instead of just plausibility
-        let valid = readings.filter { isValidReading($0) }
-
-        // If none valid, return invalid reading (caller will handle)
-        if valid.isEmpty {
-            return BPReading(sys: 0, dia: 0, map: nil, hr: nil)
-        }
-
-        let n = Double(valid.count)
-        let sysAvg = valid.map { $0.sys }.reduce(0, +) / n
-        let diaAvg = valid.map { $0.dia }.reduce(0, +) / n
-
-        // Optional fields averaged only when present and plausible
-        let mapVals = valid.compactMap { $0.map }.filter { $0.isFinite }
-        let mapAvg = mapVals.isEmpty ? nil : (mapVals.reduce(0, +) / Double(mapVals.count))
-
-        let hrVals = valid.compactMap { $0.hr }.filter { $0.isFinite && $0 >= 20 && $0 <= 220 }
-        let hrAvg = hrVals.isEmpty ? nil : (hrVals.reduce(0, +) / Double(hrVals.count))
-
-        return BPReading(sys: sysAvg, dia: diaAvg, map: mapAvg, hr: hrAvg)
+    private func clearDevice() {
+        connectTask?.cancel(); connectTask = nil
+        measurementChar = nil; controlChar = nil; batteryChar = nil
+        controlWrites.removeAll()
+        notificationReady = false; peripheral = nil
+        batteryLevelPct = nil; batteryStatusLine = "Battery: unavailable"
     }
 
-    // MARK: - Parser
+    private func updateReadiness() {
+        guard measurementChar != nil, controlChar != nil, notificationReady else { return }
+        connectTask?.cancel(); connectTask = nil
+        connectionState = .ready
+    }
 
-    private func parseBPM(_ data: Data) {
-        func sfloat(_ lo: UInt8, _ hi: UInt8) -> Double {
-            let raw = UInt16(hi) << 8 | UInt16(lo)
-            let mantissa = Int16(raw & 0x0FFF)
-            let exponent = Int8(Int16(raw) >> 12)
-            let m = (mantissa >= 0x0800) ? Int32(mantissa) - 0x1000 : Int32(mantissa)
-            return Double(m) * pow(10.0, Double(exponent))
+    private func updateBattery(_ level: Int) {
+        guard (0...100).contains(level) else { return }
+        batteryLevelPct = level
+        batteryStatusLine = level <= 10 ? "Battery: \(level)% (Critical)" :
+            level <= 20 ? "Battery: \(level)% (Low)" : "Battery: \(level)%"
+        if waitingForBattery {
+            waitingForBattery = false
+            batteryFallbackTask?.cancel(); batteryFallbackTask = nil
+            beginRun(1)
         }
+    }
 
-        let b = [UInt8](data)
-        guard b.count >= 7 else { return }
+    static func isPairingATTError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        let pairingCodes: Set<Int> = [0x05, 0x08, 0x0C, 0x0F]
+        return nsError.domain == CBATTErrorDomain && pairingCodes.contains(nsError.code)
+    }
 
-        let flags = b[0]
-        let sys = sfloat(b[1], b[2])
-        let dia = sfloat(b[3], b[4])
-        let map = sfloat(b[5], b[6])
+    static func acceptsMeasurement(in state: MeasurementState) -> Bool {
+        if case .measuring = state { return true }
+        return false
+    }
 
-        var idx = 7
-        if (flags & 0x02) != 0 { idx += 7 } // timestamp present
+    static func sessionReadingCount(configuredCount: Int, guest: Bool) -> Int {
+        guest ? 1 : min(max(configuredCount, 1), 3)
+    }
 
-        var hr: Double?
-        if (flags & 0x04) != 0, b.count >= idx + 2 {
-            hr = sfloat(b[idx], b[idx + 1])
+    private func recoveryMessage(_ error: Error) -> String {
+        if Self.isPairingATTError(error) {
+            return "Pairing needs attention. Reset the cuff through its LED pinhole, forget QardioArm in iPhone Bluetooth settings if listed, then reconnect here."
         }
-
-        let reading = BPReading(sys: sys, dia: dia, map: map, hr: hr)
-
-        DispatchQueue.main.async {
-            // v1.4.0: Only update lastReading and schedule finalize for valid readings
-            // Note: We still update lastReading for partial readings (dia == 0) so the finalize guard works
-            // But we validate in finalizeIfNeeded
-            self.lastReading = reading
-            self.scheduleFinalize()
-        }
+        return "Cuff command failed: \(error.localizedDescription)"
     }
 }
 
-// MARK: - CoreBluetooth
-
-extension BPClient: CBCentralManagerDelegate, CBPeripheralDelegate {
+extension BPClient: @preconcurrency CBCentralManagerDelegate, @preconcurrency CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state != .poweredOn {
-            status = "Bluetooth not available"
-            isConnected = false
-            canMeasure = false
-            isMeasuring = false
+        guard central.state == .poweredOn else {
+            endSession(sendCancel: false, result: .idle, keepReading: true)
+            clearDevice()
+            connectionState = .unavailable
+            return
         }
+        if connectionState == .unavailable { startConnect() }
     }
 
-    func centralManager(_ central: CBCentralManager,
-                        didDiscover p: CBPeripheral,
-                        advertisementData: [String : Any],
-                        rssi RSSI: NSNumber) {
-        central.stopScan()
-        connectTimeoutWorkItem?.cancel()
-        status = "Connecting…"
-        self.peripheral = p
-        p.delegate = self
-        central.connect(p, options: nil)
+    func centralManager(_ central: CBCentralManager, didDiscover p: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        guard connectionState == .searching else { return }
+        central.stopScan(); connectionState = .connecting
+        peripheral = p; p.delegate = self; central.connect(p)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
-        isConnected = true
-        status = "Connected — discovering…"
-        // v1.4.0: Discover both BP and Battery services
+        guard p == peripheral else { return }
+        connectionState = .preparing
         p.discoverServices([bpsService, batteryService])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
-        isConnected = false
-        canMeasure = false
-        isMeasuring = false
-        status = "Failed to connect"
+        guard p == peripheral else { return }
+        clearDevice()
+        connectionState = .failed(error.map { "Connection failed: \($0.localizedDescription)" } ?? "Connection failed")
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
-        isConnected = false
-        canMeasure = false
-        isMeasuring = false
-        status = "Disconnected"
-        measurementChar = nil
-        controlChar = nil
-        batteryChar = nil
-        // v1.4.0: Reset battery state on disconnect
-        batteryLevelPct = nil
-        batteryStatusLine = "Battery: unavailable"
-        lastBatteryState = .unknown
+        guard p == peripheral else { return }
+        endSession(sendCancel: false, result: .idle, keepReading: true)
+        clearDevice(); connectionState = .disconnected
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
-        for s in p.services ?? [] {
-            if s.uuid == bpsService {
-                p.discoverCharacteristics([measurement, control], for: s)
-            } else if s.uuid == batteryService {
-                // v1.4.0: Discover battery characteristic
-                p.discoverCharacteristics([batteryLevel], for: s)
-            }
+        guard p == peripheral else { return }
+        if let error { connectionState = .failed("Service discovery failed: \(error.localizedDescription)"); return }
+        for service in p.services ?? [] {
+            if service.uuid == bpsService { p.discoverCharacteristics([measurement, control], for: service) }
+            if service.uuid == batteryService { p.discoverCharacteristics([battery], for: service) }
         }
     }
 
-    func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
-        for ch in s.characteristics ?? [] {
-            if ch.uuid == measurement {
-                measurementChar = ch
-                p.setNotifyValue(true, for: ch)
-            } else if ch.uuid == control {
-                controlChar = ch
-            } else if ch.uuid == batteryLevel {
-                // v1.4.0: Store battery characteristic and read immediately
-                batteryChar = ch
-                p.readValue(for: ch)
-                // Subscribe to battery notifications if supported
-                if ch.properties.contains(.notify) {
-                    p.setNotifyValue(true, for: ch)
-                }
+    func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard p == peripheral else { return }
+        if let error { connectionState = .failed("Device setup failed: \(error.localizedDescription)"); return }
+        for characteristic in service.characteristics ?? [] {
+            if characteristic.uuid == measurement {
+                measurementChar = characteristic; p.setNotifyValue(true, for: characteristic)
+            } else if characteristic.uuid == control {
+                controlChar = characteristic
+            } else if characteristic.uuid == battery {
+                batteryChar = characteristic; refreshBattery()
             }
         }
-        canMeasure = (measurementChar != nil && controlChar != nil)
-        if canMeasure { status = "Connected — ready" }
+        updateReadiness()
     }
 
-    func peripheral(_ p: CBPeripheral, didWriteValueFor ch: CBCharacteristic, error: Error?) {
-        if let error = error, ch.uuid == control {
-            if ch.properties.contains(.writeWithoutResponse) {
-                p.writeValue(startCommand, for: ch, type: .withoutResponse)
+    func peripheral(_ p: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard p == peripheral, connectionState == .preparing, characteristic.uuid == measurement else { return }
+        if let error {
+            central.cancelPeripheralConnection(p)
+            clearDevice()
+            connectionState = .failed(recoveryMessage(error))
+            return
+        }
+        notificationReady = characteristic.isNotifying
+        updateReadiness()
+    }
+
+    func peripheral(_ p: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard p == peripheral, characteristic.uuid == control else { return }
+        let command = controlWrites.next()
+        guard let error else { return }
+        if command == .start {
+            endSession(sendCancel: false, result: .failed(recoveryMessage(error)), keepReading: true)
+        } else {
+            measurementState = .failed("The cuff may not have stopped cleanly. Reconnect before measuring again.")
+        }
+    }
+
+    func peripheral(_ p: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard p == peripheral else { return }
+        if let error {
+            if characteristic.uuid == measurement {
+                endSession(sendCancel: false, result: .failed("Reading failed: \(error.localizedDescription)"), keepReading: true)
             } else {
-                status = "Write error: \(error.localizedDescription)"
-                isMeasuring = false
+                batteryStatusLine = "Battery: unavailable (measurement can continue)"
+            }
+            return
+        }
+        guard let data = characteristic.value else { return }
+        if characteristic.uuid == battery, let level = data.first {
+            updateBattery(Int(level))
+        } else if characteristic.uuid == measurement {
+            do { receive(try BloodPressureMeasurementParser.parse(data)) }
+            catch {
+                endSession(sendCancel: false, result: .failed("The cuff sent an incomplete result. It was not saved; check fit and battery, then try again."), keepReading: false)
             }
         }
-    }
-
-    func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
-        guard error == nil else { status = "Read error"; return }
-        if ch.uuid == measurement, let data = ch.value {
-            parseBPM(data)
-        } else if ch.uuid == batteryLevel, let data = ch.value, !data.isEmpty {
-            // v1.4.0: Parse battery level (0-100%)
-            let level = Int(data[0])
-            if level >= 0 && level <= 100 {
-                DispatchQueue.main.async {
-                    self.updateBatteryStatus(level)
-                }
-            }
-        }
-    }
-
-    func peripheral(_ p: CBPeripheral, didUpdateNotificationStateFor ch: CBCharacteristic, error: Error?) {
-        if let error = error {
-            status = "Notify error: \(error.localizedDescription)"
-        }
-    }
-    
-    /// Filters out frames that are partial/invalid (e.g. IEEE-11073 SFLOAT NaN -> 0x07FF => 2047)
-    private func isPlausible(_ r: BPReading) -> Bool {
-        guard r.sys.isFinite, r.dia.isFinite else { return false }
-        // Adult plausible range (tune if you support other populations)
-        return (r.sys >= 60 && r.sys <= 260) && (r.dia >= 40 && r.dia <= 160)
     }
 }
