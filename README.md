@@ -12,115 +12,76 @@ https://www.linkedin.com/in/ptylr/
 
 # LibreArm
 
-LibreArm is an open-source iOS app that connects directly to the **QardioArm** blood pressure monitor via Bluetooth Low Energy (BLE) and saves readings into **Apple Health**.  
-This project exists because Qardio, Inc. shut down its backend services and app support, leaving the QardioArm hardware functional but unusable with the original app.
+[![Platform](https://img.shields.io/badge/platform-iOS-000000.svg)](https://apps.apple.com/gb/app/librearm/id6752661389)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/ptylr/LibreArm?label=latest%20release)](https://github.com/ptylr/LibreArm/releases/latest)
 
-- 📲 **Available on the [Apple App Store](https://apps.apple.com/gb/app/librearm/id6752661389)**  
-- 💻 Open source on [GitHub](https://github.com/ptylr/LibreArm) for transparency and community contributions  
-- 🫘 **[Buy LibreArm a coffee](https://buy.stripe.com/aFa28tafD9ZydgpeRV9EI00)** — LibreArm will always remain free. Voluntary support helps its continued development and does not unlock features or priority.
+LibreArm is a free, open-source iPhone app that connects directly to a QardioArm blood-pressure monitor over Bluetooth Low Energy and can save completed readings to Apple Health. It requires no Qardio account or cloud service, keeping otherwise functional hardware useful after Qardio ended its backend services and app support.
 
----
+[Download LibreArm from the Apple App Store](https://apps.apple.com/gb/app/librearm/id6752661389) · [Report a problem or request a feature](https://github.com/ptylr/LibreArm/issues)
 
-## ✨ Features (v1.5.0)
+🫘 [Buy LibreArm a coffee](https://buy.stripe.com/aFa28tafD9ZydgpeRV9EI00) — LibreArm will always remain free. Voluntary support helps its continued development and does not unlock features or priority.
 
-### New in v1.5.0
+## Version 1.6.0
 
-- **Always-Visible Hypertension Graph**: Blood pressure graph now permanently displayed on main screen
-  - No longer hidden behind a modal/button
-  - Shows placeholder graph with reduced opacity when no reading exists yet
-  - Graph updates automatically with each new reading
-  - Color-coded zones: Low (cyan), Normal (green), Prehypertension (orange), Stage 1 (pink), Stage 2 (red)
-- **Settings Persistence**: User preferences now saved between app sessions
-  - "Save to Apple Health" toggle state persisted
-  - "Average (3 readings)" mode selection persisted
-  - Delay slider value persisted (15s, 30s, 45s, or 60s)
-  - Settings restored automatically on app launch
-- **Improved UI Layout**: Streamlined interface with no shifting elements
-  - Removed app icon from main view (less clutter)
-  - Top bar shows "LibreArm" (left) and "Blood Pressure" (right)
-  - Status and battery info displayed on dedicated line
-  - Delay slider always visible (disabled when not in Average mode)
-  - Fixed layout prevents UI jumping when toggling settings
-- **Enhanced Graph Integration**: Hypertension classification graph embedded directly in reading card
-  - Proper axis labels (Systolic/Diastolic in mmHg)
-  - Zone labels clearly positioned and left-aligned
-  - Reading plot point with white border and shadow for visibility
-- Version updated to 1.5.0
+Version 1.6.0 is the current development release and includes:
 
----
+- **One, two or three readings:** choose how many readings LibreArm should take and average, with a configurable 15–60 second interval between multiple readings.
+- **Guest measurements:** take a one-off measurement that remains visible in LibreArm but is never saved to the owner's Apple Health data; owner settings are preserved and guest mode switches off after the completed run.
+- **Clear Apple Health outcomes:** see when authorisation is being requested and whether a reading was saved, partially saved, skipped or failed, with recovery guidance when access is unavailable.
+- **More reliable measurement handling:** notification-confirmed readiness, owned connection and measurement timeouts, safe cancellation, ordered cuff commands and clearer pairing recovery.
+- **Standards-aware parsing and validation:** parse Bluetooth Blood Pressure Measurement flags, mmHg and kPa units, optional fields and reserved values while keeping structurally valid high readings visible. Unsupported results are displayed with a caution but are not saved.
+- **Device-reported irregular pulse indication:** show the cuff's standard irregular-pulse status when supplied, clearly identified as a device report rather than a diagnosis.
+- **Compact, accessible home-reading guide:** keep the graph visible throughout the measurement flow, plot readings against the [NICE NG136](https://www.nice.org.uk/guidance/ng136) home-monitoring thresholds, and tap the centred classification for threshold details with text and symbols as well as colour.
+- **Foreground battery status:** show available cuff battery information and warn about low or critical levels without claiming continuous background monitoring.
+- **Modern project foundations:** a privacy manifest, shared Xcode scheme and focused automated tests for parsing, averaging, Bluetooth command handling and Apple Health save behaviour.
 
-## ✨ Features (v1.4.0)
+## Screenshots
 
-### New in v1.4.0
+<table>
+  <tr>
+    <th>Ready and configured</th>
+    <th>Guest measurement</th>
+    <th>Multi-reading measurement</th>
+  </tr>
+  <tr>
+    <td><img src="./images/screenshots/LibreArm_v1.6.0_Ready.png" width="250" alt="LibreArm connected and ready, configured to average three readings with a 30-second interval"/></td>
+    <td><img src="./images/screenshots/LibreArm_v1.6.0_Guest.png" width="250" alt="LibreArm ready to start a guest measurement that will not be saved to Apple Health"/></td>
+    <td><img src="./images/screenshots/LibreArm_v1.6.0_Measuring.png" width="250" alt="LibreArm taking reading two of three"/></td>
+  </tr>
+</table>
 
-- **Battery Level Display**: Real-time battery monitoring using standard BLE Battery Service (0x180F)
-  - Battery percentage shown in UI under connection status
-  - Low battery warning (≤20%)
-  - Critical battery alert (≤10%)
-- **Battery Notifications**: Background notifications when battery crosses low/critical thresholds (only when app is backgrounded)
-- **Critical Battery Protection**: Measurements are blocked when battery ≤10% to prevent incomplete readings
-  - Clear warning message displayed
-  - Stop button remains functional during ongoing measurements
-- **Strict Reading Validation**: Enhanced data quality control
-  - Invalid or incomplete readings are no longer displayed or saved to Apple Health
-  - Readings validated for physiological plausibility (ranges, systolic > diastolic, pulse pressure)
-  - Clear warning messages when measurements fail validation
-- **Average Mode Improvements**: Requires all 3 readings to be valid
-  - If any reading is invalid, the entire average session is rejected
-  - No partial averages saved to Health
-  - User prompted to retry if session invalid
-- **Automatic Battery Checks**: Battery level read on connect, before measurements, and after completion
-- Version updated to 1.4.0
+<table>
+  <tr>
+    <th>Result and home-reading guide</th>
+    <th>Threshold guidance</th>
+  </tr>
+  <tr>
+    <td><img src="./images/screenshots/LibreArm_v1.6.0_Result.png" width="250" alt="LibreArm displaying a 120 over 70 result and the NICE home-reading guide"/></td>
+    <td><img src="./images/screenshots/LibreArm_v1.6.0_Guidance.png" width="250" alt="LibreArm showing the NICE home-reading threshold guidance sheet"/></td>
+  </tr>
+</table>
 
-**Special Thanks:**
-v1.4.0 was inspired by valuable community feedback:
-- Battery percentage monitoring suggested by <a href="https://github.com/ashok-raj" target="_blank">ashok-raj</a>
-- Inaccurate reading validation improvements suggested by <a href="https://github.com/stacksjb" target="_blank">stacksjb</a>
+## Getting started
 
----
+### App Store
 
-## ✨ Features (v1.3.0)
+Install [LibreArm from the Apple App Store](https://apps.apple.com/gb/app/librearm/id6752661389), allow Bluetooth access, and grant Apple Health write access if you want owner readings saved.
 
-### New in v1.3.0
+1. Wake the QardioArm and keep it near the iPhone.
+2. Open LibreArm and wait for **Connected — ready**.
+3. Choose one, two or three readings and, for multiple readings, the interval between them.
+4. Leave **Guest measurement** off to save an owner reading to Apple Health, or enable it for a one-off measurement that must not be saved.
+5. Tap **Start Measurement** and follow the cuff's normal fitting and positioning instructions.
 
-- Added **Delay Between Readings** slider — choose between 15s, 30s, 45s, or 60s intervals for Average Mode.
-- Average Mode label updated to "Average (3 readings)" for clarity.
-- Added live countdown between readings that reflects the user-selected delay value.
-- Enhanced reliability: the **Stop Measurement** button now remains active and red for the entire multi-run session.
-- Improved UI alignment for toggles and controls.
-- Version updated to 1.3.0.
+### Build from source
 
----
-## ✨ Features (v1.2.0)
+Requirements:
 
-- Connects to QardioArm over BLE (no Qardio cloud or accounts required)
-- **Connection management**:
-  - Start scanning automatically on launch
-  - Retry button with 30-second connection timeout (hidden when connected)
-  - Device status always visible in the UI
-- **Measurement handling**:
-  - ✅ Improved reliability: readings are now only saved to Health **once the full blood pressure cycle is complete**
-  - Single, debounced save to HealthKit (no partial inflating entries)
-  - Dynamic **Start/Stop button**  
-    - Blue *Start Measurement* when idle  
-    - Red *Stop Measurement* while inflating, sends cancel on tap
-- **UI improvements**:
-  - Centered title and status
-  - App icon displayed in header
-  - Card-style layout for latest reading (systolic, diastolic, MAP, heart rate)
-  - Developer credit and GitHub link footer
-- 100% local: no accounts, no data leaves your device
-
----
-
-## 📲 Installation
-
-### 1. From the App Store (recommended)
-Download directly from the App Store:  
-👉 [LibreArm on the App Store](https://apps.apple.com/gb/app/librearm/id6752661389)  
-
-### 2. Build from source
-If you’d like to build it yourself:
+- Xcode 16.4 or later
+- An iPhone running iOS 18.5 or later
+- An Apple ID configured in Xcode
+- A QardioArm for Bluetooth measurement testing
 
 ```bash
 git clone https://github.com/ptylr/LibreArm.git
@@ -128,79 +89,72 @@ cd LibreArm
 open LibreArm.xcodeproj
 ```
 
-Requirements:
-- Xcode 15+
-- iOS 16+ device (QardioArm does not work in the simulator)
-- Apple ID signed into Xcode (free dev account OK for local builds)
+Select your development team under **Signing & Capabilities**, connect an iPhone, then build and run the `LibreArm` scheme. The iOS Simulator can build the interface and run automated tests, but it cannot reproduce the QardioArm Bluetooth connection or validate Apple Health writes.
 
-On first run you’ll be prompted for:
-- **Bluetooth access** (to connect to the cuff)
-- **Health access** (to save readings)
+## Compatibility
 
----
+LibreArm is designed for iPhone and the QardioArm blood-pressure monitor. Hardware revisions and pairing histories can behave differently; check the [issue tracker](https://github.com/ptylr/LibreArm/issues) for current compatibility reports or open an issue with the iPhone model, iOS version and observable behaviour. Do not publish personal health readings or device identifiers.
 
-## 🖼 Screenshots
+The independent [LibreArm Android port](https://github.com/agreenbhm/LibreArm_Android), maintained by [Drew Green](https://github.com/agreenbhm), is a separate community project. Please direct Android questions and contributions to that repository.
 
-<table>
-  <tr>
-    <td><img src="./images/screenshots/LibreArm_iPhone16Pro_AppleHealth_Permissions.png" width="250" alt="Apple Health Permissions"/></td>
-    <td><img src="./images/screenshots/LibreArm_v1.5.0_NoReading.png" width="250" alt="LibreArm with hypertension graph - no reading yet"/></td>
-    <td><img src="./images/screenshots/LibreArm_v1.5.0_Measuring.png" width="250" alt="LibreArm measuring with live graph update"/></td>
-  </tr>
-</table>
+## Privacy and security
 
----
+LibreArm has no accounts, advertising, analytics, tracking, servers or cloud storage. Cuff communication and measurement processing happen locally on the iPhone. With permission, LibreArm writes completed owner readings to Apple Health; it does not read, sell or share Health data.
 
-## 🔧 Development Notes
+See the [privacy policy](PRIVACY.md) and [security policy](SECURITY.md) for details.
 
-- **Language & UI**: Swift + SwiftUI
-- **Bluetooth**: CoreBluetooth
-  - Blood Pressure Service (0x1810): measurement char 0x2A35 + vendor control UUID `583CB5B3-875D-40ED-9098-C39EB0C1983D`
-  - Battery Service (0x180F): battery level char 0x2A19
-- **Health**: HealthKit (blood pressure and heart rate types)
-- **Notifications**: UserNotifications (battery warnings when backgrounded)
-- **App Icon**: Custom design included in `Assets.xcassets`
+## Development
 
-The app implements a debounce strategy so that **only the final reading** after a measurement is saved, preventing dozens of partial entries in Health.
-As of v1.4.0, LibreArm uses **strict validation** to ensure that only complete, physiologically plausible readings are displayed and saved to Apple Health.
+- **Language and interface:** Swift and SwiftUI
+- **Device communication:** CoreBluetooth Blood Pressure Service (`0x1810`), Blood Pressure Measurement characteristic (`0x2A35`) and the QardioArm control characteristic
+- **Battery:** standard Bluetooth Battery Service (`0x180F`) when exposed by the cuff
+- **Health:** HealthKit blood-pressure correlation plus an optional separate heart-rate sample
+- **Tests:** XCTest coverage for the pure measurement parser, validation and averaging logic, command acknowledgement ordering, pairing error classification and Apple Health outcomes
 
----
+Run the automated suite from Xcode using **Product → Test** or:
 
-## 🛡 Privacy
+```bash
+xcodebuild -project LibreArm.xcodeproj \
+  -scheme LibreArm \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  test
+```
 
-- LibreArm does **not** connect to the internet.  
-- All readings stay on your device.  
-- Data is saved into **Apple Health** if permission is granted.
+Physical iPhone and QardioArm testing remains required for Bluetooth, pairing, cancellation and Apple Health acceptance.
 
----
+## Contributing and support
 
-## 🤝 Contributing
+Bug reports, focused enhancements and pull requests are welcome:
 
-Pull requests are welcome! If you’d like to contribute improvements (UI, Bluetooth stability, documentation), please fork the repo and open a PR.
+- Search or open a [GitHub Issue](https://github.com/ptylr/LibreArm/issues).
+- Describe reproducible steps, expected behaviour, actual behaviour, iPhone model and iOS version.
+- Do not include personal health readings, Apple Health exports, device identifiers or credentials.
+- For code changes, keep the scope focused and explain how the change was tested.
 
----
+Security support is described in [SECURITY.md](SECURITY.md).
 
-## Android Port (Community)
-A community-maintained Android port of LibreArm is available for users who want similar functionality on Android devices.
+## Release history
 
-- Android repository: https://github.com/agreenbhm/LibreArm_Android
-- Author: Drew Green (GitHub: https://github.com/agreenbhm)
-- Background and discussion: https://github.com/ptylr/LibreArm/issues/11
+The release pages contain the complete notes for previous versions.
 
-This Android implementation is a separate, community-driven project and is not affiliated with or maintained as part of the LibreArm iOS app. Please direct any Android-specific questions, issues, or contributions to the Android repository.
+| Version | Released | Highlights |
+|---|---:|---|
+| [1.5.0](https://github.com/ptylr/LibreArm/releases/tag/1.5.0) | 12 January 2026 | Always-visible graph, persistent settings and improved layout |
+| [1.4.0](https://github.com/ptylr/LibreArm/releases/tag/1.4.0) | 5 January 2026 | Battery monitoring, critical-battery protection and reading validation |
+| [1.3.0](https://github.com/ptylr/LibreArm/releases/tag/1.3.0) | 20 October 2025 | Configurable delay and more reliable multi-reading sessions |
+| [1.2.0](https://github.com/ptylr/LibreArm/releases/tag/1.2.0) | 14 October 2025 | Three-reading average mode, countdown and session controls |
+| [1.1.1](https://github.com/ptylr/LibreArm/releases/tag/1.1.1) | 28 September 2025 | Completed-reading Health saves and stability fixes |
+| [1.1.0](https://github.com/ptylr/LibreArm/releases/tag/1.1.0) | 15 September 2025 | App Store-ready connection, interface and HealthKit flow |
+| [1.0.0](https://github.com/ptylr/LibreArm/releases/tag/1.0.0) | 15 September 2025 | Initial release |
 
----
+See [all releases](https://github.com/ptylr/LibreArm/releases) for downloadable source archives and full notes.
 
+## Licence
 
-## 📜 License
-
-This project is licensed under the [MIT License](LICENSE).
-
----
-
+LibreArm is available under the [MIT Licence](LICENSE).
 
 ## Disclaimer
-This document is provided for information purposes only. Paul Taylor may change the contents hereof without notice. This document is not warranted to be error-free, nor subject to any other warranties or conditions, whether expressed orally or implied in law, including implied warranties and conditions of merchantability or fitness for a particular purpose. Paul Taylor specifically disclaims any liability with respect to this document and no contractual obligations are formed either directly or indirectly by this document. The technologies, functionality, services, and processes described herein are subject to change without notice.
 
-LibreArm is **not affiliated with or endorsed by Qardio, Inc.**  
-QardioArm™ is a trademark of Qardio, Inc. This project is community-driven to keep existing hardware usable.
+LibreArm is not a medical device and does not provide a diagnosis or medical advice. Do not use it as a substitute for professional care or delay seeking help because of information shown by the app. Follow the monitor manufacturer's instructions and seek appropriate medical advice if a reading or symptom concerns you.
+
+LibreArm is an independent community project and is not affiliated with or endorsed by Qardio, Inc. QardioArm™ is a trademark of Qardio, Inc.; other third-party names and marks belong to their respective owners.

@@ -13,6 +13,9 @@
 		999607862E77547300929595 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9996077A2E77547300929595 /* ContentView.swift */; };
 		999607872E77547300929595 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 999607802E77547300929595 /* Assets.xcassets */; };
 		DCD95D0C61BD434497125B11 /* HypertensionGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28BD27522D7348AAA1DD9336 /* HypertensionGraphView.swift */; };
+		A10000000000000000000001 /* BloodPressureMeasurement.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* BloodPressureMeasurement.swift */; };
+		A10000000000000000000003 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000004 /* PrivacyInfo.xcprivacy */; };
+		A20000000000000000000001 /* BloodPressureMeasurementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* BloodPressureMeasurementTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,9 +27,20 @@
 		999607802E77547300929595 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		999607812E77547300929595 /* LibreArm.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LibreArm.entitlements; sourceTree = "<group>"; };
 		28BD27522D7348AAA1DD9336 /* HypertensionGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HypertensionGraphView.swift; sourceTree = "<group>"; };
+		A10000000000000000000002 /* BloodPressureMeasurement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodPressureMeasurement.swift; sourceTree = "<group>"; };
+		A10000000000000000000004 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A20000000000000000000002 /* BloodPressureMeasurementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodPressureMeasurementTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* LibreArmTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LibreArmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		A20000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		996CD8652E773AD40021963C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -43,8 +57,10 @@
 				996CD8692E773AD40021963C /* Products */,
 				9996077C2E77547300929595 /* App */,
 				9996077F2E77547300929595 /* Core */,
+				A20000000000000000000005 /* LibreArmTests */,
 				999607812E77547300929595 /* LibreArm.entitlements */,
 				999607802E77547300929595 /* Assets.xcassets */,
+				A10000000000000000000004 /* PrivacyInfo.xcprivacy */,
 			);
 			sourceTree = "<group>";
 		};
@@ -52,6 +68,7 @@
 			isa = PBXGroup;
 			children = (
 				996CD8682E773AD40021963C /* LibreArm.app */,
+				A20000000000000000000003 /* LibreArmTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -71,13 +88,40 @@
 			children = (
 				9996077D2E77547300929595 /* BPClient.swift */,
 				9996077E2E77547300929595 /* Health.swift */,
+				A10000000000000000000002 /* BloodPressureMeasurement.swift */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		A20000000000000000000005 /* LibreArmTests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000002 /* BloodPressureMeasurementTests.swift */,
+			);
+			path = LibreArmTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		A20000000000000000000006 /* LibreArmTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A20000000000000000000007 /* Build configuration list for PBXNativeTarget "LibreArmTests" */;
+			buildPhases = (
+				A20000000000000000000008 /* Sources */,
+				A20000000000000000000004 /* Frameworks */,
+				A20000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A2000000000000000000000A /* PBXTargetDependency */,
+			);
+			name = LibreArmTests;
+			productName = LibreArmTests;
+			productReference = A20000000000000000000003 /* LibreArmTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		996CD8672E773AD40021963C /* LibreArm */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 996CD8892E773AD50021963C /* Build configuration list for PBXNativeTarget "LibreArm" */;
@@ -93,7 +137,7 @@
 			name = LibreArm;
 			packageProductDependencies = (
 			);
-			productName = LibraArm;
+			productName = LibreArm;
 			productReference = 996CD8682E773AD40021963C /* LibreArm.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -109,6 +153,10 @@
 				TargetAttributes = {
 					996CD8672E773AD40021963C = {
 						CreatedOnToolsVersion = 16.4;
+					};
+					A20000000000000000000006 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 996CD8672E773AD40021963C;
 					};
 				};
 			};
@@ -127,22 +175,39 @@
 			projectRoot = "";
 			targets = (
 				996CD8672E773AD40021963C /* LibreArm */,
+				A20000000000000000000006 /* LibreArmTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A20000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		996CD8662E773AD40021963C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				999607872E77547300929595 /* Assets.xcassets in Resources */,
+				A10000000000000000000003 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		A20000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A20000000000000000000001 /* BloodPressureMeasurementTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		996CD8642E773AD40021963C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -152,10 +217,29 @@
 				999607852E77547300929595 /* LibreArmApp.swift in Sources */,
 				999607862E77547300929595 /* ContentView.swift in Sources */,
 				DCD95D0C61BD434497125B11 /* HypertensionGraphView.swift in Sources */,
+				A10000000000000000000001 /* BloodPressureMeasurement.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		A2000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 996CD8602E773AD40021963C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 996CD8672E773AD40021963C;
+			remoteInfo = LibreArm;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		A2000000000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 996CD8672E773AD40021963C /* LibreArm */;
+			targetProxy = A2000000000000000000000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		996CD8872E773AD50021963C /* Debug */ = {
@@ -312,7 +396,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5.0;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ptylr.LibreArm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -353,7 +437,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5.0;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ptylr.LibreArm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -364,6 +448,38 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A2000000000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9R75B5EZBN;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ptylr.LibreArmTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LibreArm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LibreArm";
+			};
+			name = Debug;
+		};
+		A2000000000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9R75B5EZBN;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ptylr.LibreArmTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LibreArm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LibreArm";
 			};
 			name = Release;
 		};
@@ -384,6 +500,15 @@
 			buildConfigurations = (
 				996CD88A2E773AD50021963C /* Debug */,
 				996CD88B2E773AD50021963C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A20000000000000000000007 /* Build configuration list for PBXNativeTarget "LibreArmTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A2000000000000000000000C /* Debug */,
+				A2000000000000000000000D /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
